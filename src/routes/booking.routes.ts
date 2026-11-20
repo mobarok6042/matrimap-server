@@ -3,7 +3,11 @@ import { z } from "zod";
 import { HttpError } from "../lib/http-error.js";
 import { BookingModel } from "../models/booking.model.js";
 import { ServiceModel } from "../models/service.model.js";
-import { requireAuth, requireUnblockedUser } from "../middleware/require-auth.js";
+import {
+  requireAuth,
+  requireRole,
+  requireUnblockedUser,
+} from "../middleware/require-auth.js";
 
 export const bookingRouter = Router();
 
@@ -15,15 +19,15 @@ const createBookingSchema = z.object({
 });
 
 // POST /api/bookings — create a booking request. Defaults to "pending".
-bookingRouter.post("/", requireAuth, requireUnblockedUser, async (req, res, next) => {
+bookingRouter.post(
+  "/",
+  requireAuth,
+  requireRole("customer"),
+  requireUnblockedUser,
+  async (req, res, next) => {
   try {
     const input = createBookingSchema.parse(req.body);
     const user = req.auth!.user;
-    const userRole = (user as { role?: string }).role;
-
-    if (userRole !== "customer") {
-      throw new HttpError(403, "Only customer accounts can request bookings.");
-    }
 
     const service = await ServiceModel.findOne({
       _id: input.serviceId,
@@ -55,10 +59,11 @@ bookingRouter.post("/", requireAuth, requireUnblockedUser, async (req, res, next
     }
     next(error);
   }
-});
+  },
+);
 
 // GET /api/bookings/me — customer booking history (pending/accepted/declined)
-bookingRouter.get("/me", requireAuth, async (req, res, next) => {
+bookingRouter.get("/me", requireAuth, requireRole("customer"), async (req, res, next) => {
   try {
     const bookings = await BookingModel.find({ customerId: req.auth!.user.id })
       .sort({ createdAt: -1 })
@@ -70,13 +75,8 @@ bookingRouter.get("/me", requireAuth, async (req, res, next) => {
 });
 
 // GET /api/bookings/vendor/me — vendor booking requests for their services
-bookingRouter.get("/vendor/me", requireAuth, async (req, res, next) => {
+bookingRouter.get("/vendor/me", requireAuth, requireRole("vendor"), async (req, res, next) => {
   try {
-    const userRole = (req.auth?.user as { role?: string } | undefined)?.role;
-    if (userRole !== "vendor") {
-      throw new HttpError(403, "Only vendor accounts can access bookings.");
-    }
-
     const bookings = await BookingModel.find({ vendorId: req.auth!.user.id })
       .sort({ createdAt: -1 })
       .lean();
@@ -87,14 +87,13 @@ bookingRouter.get("/vendor/me", requireAuth, async (req, res, next) => {
 });
 
 // POST /api/bookings/:id/accept — vendor accepts a booking
-bookingRouter.post("/:id/accept", requireAuth, async (req, res, next) => {
+bookingRouter.post(
+  "/:id/accept",
+  requireAuth,
+  requireRole("vendor"),
+  async (req, res, next) => {
   try {
     const user = req.auth!.user;
-    const userRole = (user as { role?: string } | undefined)?.role;
-
-    if (userRole !== "vendor") {
-      throw new HttpError(403, "Only vendor accounts can accept bookings.");
-    }
 
     const booking = await BookingModel.findById(req.params.id).lean();
     if (!booking) throw new HttpError(404, "Booking not found");
@@ -114,17 +113,17 @@ bookingRouter.post("/:id/accept", requireAuth, async (req, res, next) => {
   } catch (error) {
     next(error);
   }
-});
+  },
+);
 
 // POST /api/bookings/:id/decline — vendor declines a booking
-bookingRouter.post("/:id/decline", requireAuth, async (req, res, next) => {
+bookingRouter.post(
+  "/:id/decline",
+  requireAuth,
+  requireRole("vendor"),
+  async (req, res, next) => {
   try {
     const user = req.auth!.user;
-    const userRole = (user as { role?: string } | undefined)?.role;
-
-    if (userRole !== "vendor") {
-      throw new HttpError(403, "Only vendor accounts can decline bookings.");
-    }
 
     const booking = await BookingModel.findById(req.params.id).lean();
     if (!booking) throw new HttpError(404, "Booking not found");
@@ -144,4 +143,5 @@ bookingRouter.post("/:id/decline", requireAuth, async (req, res, next) => {
   } catch (error) {
     next(error);
   }
-});
+  },
+);

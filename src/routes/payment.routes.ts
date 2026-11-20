@@ -3,12 +3,16 @@ import type Stripe from "stripe";
 import { env } from "../config/env.js";
 import { HttpError } from "../lib/http-error.js";
 import { isStripeConfigured, stripe } from "../lib/stripe.js";
-import { requireAuth } from "../middleware/require-auth.js";
+import { requireAuth, requireRole } from "../middleware/require-auth.js";
 
 export const paymentRouter = Router();
 
 /** POST /api/payments/checkout — creates a hosted Stripe Checkout session. */
-paymentRouter.post("/checkout", requireAuth, async (req, res, next) => {
+paymentRouter.post(
+  "/checkout",
+  requireAuth,
+  requireRole("customer", "vendor"),
+  async (req, res, next) => {
   try {
     if (!isStripeConfigured) {
       throw new HttpError(503, "Stripe is not configured. Add STRIPE_SECRET_KEY to .env");
@@ -35,7 +39,8 @@ paymentRouter.post("/checkout", requireAuth, async (req, res, next) => {
       ],
       success_url: `${env.CLIENT_URL}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${env.CLIENT_URL}/checkout/cancel`,
-    });
+      },
+    );
 
     res.json({ id: session.id, url: session.url });
   } catch (error) {

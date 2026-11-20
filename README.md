@@ -55,6 +55,17 @@ Scripts:
 | POST | `/api/upload/image` | cookie | Multipart field `image` → ImgBB (max 5 MB) |
 | POST | `/api/payments/checkout` | cookie | Creates a Stripe Checkout session, returns `{ id, url }` |
 | POST | `/api/payments/webhook` | signature | Stripe webhook; needs raw body |
+| GET | `/api/services` | public | Lists approved services with active listings first |
+| GET | `/api/services/:id` | public | Returns an approved service, including inactive listings |
+| POST | `/api/services` | vendor cookie | Creates a service pending admin approval; blocked vendors are rejected |
+| POST | `/api/bookings` | customer cookie | Creates a booking for an approved service; blocked customers are rejected |
+| GET | `/api/admin/services` | admin cookie | Lists all services and their review/availability status |
+| POST | `/api/admin/services/:id/approve` | admin cookie | Approves a pending service for public display |
+| POST | `/api/admin/services/:id/decline` | admin cookie | Declines a pending service |
+| PATCH | `/api/admin/services/:id/availability` | admin cookie | Activates/deactivates an approved service |
+| GET | `/api/admin/users` | admin cookie | Lists customer and vendor accounts |
+| POST | `/api/admin/users/:id/block` | admin cookie | Blocks a customer/vendor from booking or creating services |
+| POST | `/api/admin/users/:id/unblock` | admin cookie | Restores booking and service creation access |
 
 `GET /api/auth/ok` is a quick way to confirm the Better Auth mount is working.
 
@@ -70,6 +81,15 @@ Scripts:
 - **Password/role validation** runs in a `hooks.before` handler on
   `/sign-up/email`: 6+ characters with upper- and lowercase letters, and a
   `customer` or `vendor` role.
+- **Admin access** is granted by setting a trusted Better Auth user's `role` to
+  `admin` directly in the database. The sign-up flow does not allow choosing
+  the admin role.
+- **Service moderation** defaults new services to `pending`. Existing services
+  without an approval status are also treated as pending. Public service cards
+  include approved active and inactive listings, with active listings first;
+  only active listings can be booked.
+- **Blocked accounts** cannot create service listings or booking requests.
+  Admin block/unblock controls apply only to customer and vendor accounts.
 - **Stripe webhook** uses `express.raw()` and `stripe.webhooks.constructEvent`.
   For local development: `stripe listen --forward-to localhost:4000/api/payments/webhook`
   and copy the printed `whsec_…` value into `STRIPE_WEBHOOK_SECRET`.
@@ -88,6 +108,6 @@ src/
 ├── config/                env validation, MongoDB / Mongoose connections
 ├── lib/                   auth, Stripe, ImgBB, errors
 ├── middleware/            requireAuth, 404 + error handlers
-├── models/                Mongoose Profile model
-└── routes/                me, profiles, upload, payments
+├── models/                Mongoose profile, service and booking models
+└── routes/                me, profiles, services, bookings, admin, upload, payments
 ```

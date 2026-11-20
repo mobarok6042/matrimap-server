@@ -2,7 +2,12 @@ import { Router } from "express";
 import { z } from "zod";
 import { HttpError } from "../lib/http-error.js";
 import { ServiceModel } from "../models/service.model.js";
-import { requireAuth, requireUnblockedUser } from "../middleware/require-auth.js";
+import {
+  requireAuth,
+  requireRole,
+  requireUnblockedUser,
+} from "../middleware/require-auth.js";
+import { Types } from "mongoose";
 
 export const serviceRouter = Router();
 
@@ -22,14 +27,11 @@ const createServiceSchema = z.object({
   email: z.string().optional().default(""),
 });
 
-// GET /api/services — Publicly accessible for anyone (without sign-in or customers/vendors)
+// GET /api/services — Publicly accessible; approved services are listed with active first.
 serviceRouter.get("/", async (req, res, next) => {
   try {
     const { category, search } = req.query;
-    const filter: Record<string, unknown> = {
-      approvalStatus: "approved",
-      isAvailable: { $ne: false },
-    };
+    const filter: Record<string, unknown> = { approvalStatus: "approved" };
 
     if (category && typeof category === "string" && category !== "All") {
       filter.category = category;
@@ -44,7 +46,10 @@ serviceRouter.get("/", async (req, res, next) => {
       ];
     }
 
-    const services = await ServiceModel.find(filter).sort({ createdAt: -1 }).limit(100).lean();
+    const services = await ServiceModel.find(filter)
+      .sort({ isAvailable: -1, createdAt: -1 })
+      .limit(100)
+      .lean();
     res.json(services);
   } catch (error) {
     next(error);
@@ -52,13 +57,8 @@ serviceRouter.get("/", async (req, res, next) => {
 });
 
 // GET /api/services/vendor/me — Only for authenticated vendor to see their own services
-serviceRouter.get("/vendor/me", requireAuth, async (req, res, next) => {
+serviceRouter.get("/vendor/me", requireAuth, requireRole("vendor"), async (req, res, next) => {
   try {
-    const userRole = (req.auth?.user as { role?: string })?.role;
-    if (userRole !== "vendor") {
-      throw new HttpError(403, "Only vendor accounts can access vendor services.");
-    }
-
     const services = await ServiceModel.find({ vendorId: req.auth!.user.id })
       .sort({ createdAt: -1 })
       .lean();
@@ -68,13 +68,35 @@ serviceRouter.get("/vendor/me", requireAuth, async (req, res, next) => {
   }
 });
 
-// GET /api/services/:id — Publicly accessible
+serviceRouter.get(
+  "/:id/manage",
+  requireAuth,
+  requireRole("vendor"),
+  requireUnblockedUser,
+  async (req, res, next) => {
+    try {
+      if (!Types.ObjectId.isValid(req.params.id)) {
+        throw new HttpError(404, "Service not found");
+      }
+
+      const service = await ServiceModel.findOne({
+        _id: req.params.id,
+        vendorId: req.auth!.user.id,
+      }).lean();
+      if (!service) throw new HttpError(404, "Service not found");
+      res.json(service);
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+// GET /api/services/:id — Publicly accessible for approved services, including inactive ones.
 serviceRouter.get("/:id", async (req, res, next) => {
   try {
     const service = await ServiceModel.findOne({
       _id: req.params.id,
       approvalStatus: "approved",
-      isAvailable: { $ne: false },
     }).lean();
     if (!service) throw new HttpError(404, "Service not found");
     res.json(service);
@@ -84,14 +106,14 @@ serviceRouter.get("/:id", async (req, res, next) => {
 });
 
 // POST /api/services — Only for vendor users
-serviceRouter.post("/", requireAuth, requireUnblockedUser, async (req, res, next) => {
+serviceRouter.post(
+  "/",
+  requireAuth,
+  requireRole("vendor"),
+  requireUnblockedUser,
+  async (req, res, next) => {
   try {
     const user = req.auth!.user;
-    const userRole = (user as { role?: string })?.role;
-
-    if (userRole !== "vendor") {
-      throw new HttpError(403, "Access denied. Only vendors can create wedding services.");
-    }
 
     const input = createServiceSchema.parse(req.body);
     const title = input.serviceName || input.title;
@@ -123,10 +145,81 @@ serviceRouter.post("/", requireAuth, requireUnblockedUser, async (req, res, next
     }
     next(error);
   }
-});
+  },
+);
+
+serviceRouter.put(
+  "/:id",
+  requireAuth,
+  requireRole("vendor"),
+  requireUnblockedUser,
+  async (req, res, next) => {
+    try {
+      const id = req.params.id;
+      if (!Types.ObjectId.isValid(id)) throw new HttpError(404, "Service not found");
+
+      const input = createServiceSchema.parse(req.body);
+      const title = input.serviceName || input.title;
+      const category = input.serviceCategory || input.category;
+      const image = input.serviceImage || input.image || input.images?.[0] || "";
+      if (!title) throw new HttpError(400, "Service Name is required.");
+      if (!category) throw new HttpError(400, "Service Category is required.");
+
+      const service = await ServiceModel.findOneAndUpdate(
+        { _id: id, vendorId: req.auth!.user.id },
+        {
+          $set: {
+            title,
+            category,
+            price: input.price,
+            pricingUnit: input.pricingUnit,
+            description: input.description,
+            location: input.location,
+            image,
+            phone: input.phone,
+            email: input.email,
+            approvalStatus: "pending",
+          },
+        },
+        { new: true, runValidators: true },
+      ).lean();
+
+      if (!service) throw new HttpError(404, "Service not found");
+      res.json(service);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({ error: "Invalid service data", issues: error.issues });
+        return;
+      }
+      next(error);
+    }
+  },
+);
+
+serviceRouter.delete(
+  "/:id",
+  requireAuth,
+  requireRole("vendor"),
+  requireUnblockedUser,
+  async (req, res, next) => {
+    try {
+      const id = req.params.id;
+      if (!Types.ObjectId.isValid(id)) throw new HttpError(404, "Service not found");
+
+      const result = await ServiceModel.deleteOne({
+        _id: id,
+        vendorId: req.auth!.user.id,
+      });
+      if (!result.deletedCount) throw new HttpError(404, "Service not found");
+      res.status(204).end();
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 // POST /api/services/seed — Populate initial sample services if collection is empty
-serviceRouter.post("/seed", async (_req, res, next) => {
+serviceRouter.post("/seed", requireAuth, requireRole("admin"), async (_req, res, next) => {
   try {
     const count = await ServiceModel.countDocuments();
     if (count > 0) {

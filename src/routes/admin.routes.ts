@@ -1,6 +1,7 @@
 import { Router, type NextFunction, type Request, type Response } from "express";
-import type { Document, Filter } from "mongodb";
+import { ObjectId, type Document, type Filter } from "mongodb";
 import { Types } from "mongoose";
+import { z } from "zod";
 import { mongoDb } from "../config/database.js";
 import { HttpError } from "../lib/http-error.js";
 import { requireAdmin, requireAuth } from "../middleware/require-auth.js";
@@ -9,7 +10,7 @@ import { ServiceModel } from "../models/service.model.js";
 type ManagedRole = "customer" | "vendor";
 
 interface ManagedUserDocument extends Document {
-  _id: string;
+  _id: string | ObjectId;
   name: string;
   email: string;
   role: ManagedRole;
@@ -27,13 +28,9 @@ function getParamId(req: Request): string {
   return Array.isArray(id) ? id[0] ?? "" : id;
 }
 
-adminRouter.get("/services/pending", async (_req, res, next) => {
+adminRouter.get("/services", async (_req, res, next) => {
   try {
-    const services = await ServiceModel.find({
-      $or: [{ approvalStatus: "pending" }, { approvalStatus: { $exists: false } }],
-    })
-      .sort({ createdAt: -1 })
-      .lean();
+    const services = await ServiceModel.find().sort({ createdAt: -1 }).lean();
     res.json(services);
   } catch (error) {
     next(error);
@@ -68,6 +65,31 @@ function reviewService(approvalStatus: "approved" | "declined") {
 adminRouter.post("/services/:id/approve", reviewService("approved"));
 adminRouter.post("/services/:id/decline", reviewService("declined"));
 
+const availabilitySchema = z.object({ isAvailable: z.boolean() });
+
+adminRouter.patch("/services/:id/availability", async (req, res, next) => {
+  try {
+    const id = getParamId(req);
+    if (!Types.ObjectId.isValid(id)) throw new HttpError(404, "Service not found");
+
+    const { isAvailable } = availabilitySchema.parse(req.body);
+    const service = await ServiceModel.findOneAndUpdate(
+      { _id: id, approvalStatus: "approved" },
+      { $set: { isAvailable } },
+      { new: true },
+    ).lean();
+
+    if (!service) throw new HttpError(404, "Approved service not found");
+    res.json(service);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: "isAvailable must be a boolean." });
+      return;
+    }
+    next(error);
+  }
+});
+
 adminRouter.get("/users", async (_req, res, next) => {
   try {
     const accounts = await users
@@ -80,7 +102,7 @@ adminRouter.get("/users", async (_req, res, next) => {
 
     res.json(
       accounts.map((user) => ({
-        id: user._id,
+        id: String(user._id),
         name: user.name,
         email: user.email,
         role: user.role,
@@ -98,9 +120,13 @@ async function setUserBlocked(
   isBlocked: boolean,
   res: Response,
 ): Promise<void> {
+  const ids: (string | ObjectId)[] = [userId];
+  if (ObjectId.isValid(userId)) ids.push(new ObjectId(userId));
   const filter: Filter<ManagedUserDocument> = {
-    _id: userId,
-    role: { $in: ["customer", "vendor"] },
+    $and: [
+      { _id: { $in: ids } },
+      { role: { $in: ["customer", "vendor"] } },
+    ],
   };
   const result = await users.updateOne(filter, { $set: { isBlocked } });
   if (!result.matchedCount) throw new HttpError(404, "Customer or vendor account not found");
@@ -111,7 +137,7 @@ async function setUserBlocked(
   if (!user) throw new HttpError(404, "Customer or vendor account not found");
 
   res.json({
-    id: user._id,
+    id: String(user._id),
     name: user.name,
     email: user.email,
     role: user.role,
