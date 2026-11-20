@@ -9,6 +9,7 @@ import { meRouter } from "./routes/me.routes.js";
 import { paymentRouter, stripeWebhook } from "./routes/payment.routes.js";
 import { profileRouter } from "./routes/profile.routes.js";
 import { serviceRouter } from "./routes/service.routes.js";
+import { bookingRouter } from "./routes/booking.routes.js";
 import { uploadRouter } from "./routes/upload.routes.js";
 
 export function createApp() {
@@ -42,6 +43,7 @@ export function createApp() {
   app.use("/api/me", meRouter);
   app.use("/api/profiles", profileRouter);
   app.use("/api/services", serviceRouter);
+  app.use("/api/bookings", bookingRouter);
   app.use("/api/upload", uploadRouter);
   app.use("/api/payments", paymentRouter);
 
