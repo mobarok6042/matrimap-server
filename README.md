@@ -10,7 +10,9 @@ npm install
 npm run dev                 # tsx watch — http://localhost:4000
 ```
 
-Requires Node 20+ and a MongoDB server. Defaults to `mongodb://127.0.0.1:27017`.
+Requires Node 20+ and a reachable MongoDB cluster. The supplied Atlas SRV URI is
+stored in `.env`; make sure this machine's public IP is allowed in Atlas
+**Network Access**.
 
 Scripts:
 
@@ -27,13 +29,15 @@ Scripts:
 | --- | --- | --- |
 | `NODE_ENV` | `development` | — |
 | `PORT` | `4000` | — |
-| `MONGODB_URI` | `mongodb://127.0.0.1:27017` | Atlas SRV URI also works |
+| `MONGODB_URI` | `mongodb://127.0.0.1:27017` | Atlas SRV URI configured in `.env` |
 | `DB_NAME` | `matrimap` | — |
-| `MONGODB_ENABLE_TRANSACTIONS` | `false` | Set to `true` for a replica set / sharded cluster |
-| `BETTER_AUTH_SECRET` | dev-only fallback | Generate with `openssl rand -base64 32`; always set in production |
-| `BETTER_AUTH_URL` | `http://localhost:4000` | **This server's** URL |
+| `MONGODB_ENABLE_TRANSACTIONS` | `false` | `true` in `.env` (Atlas replica set) |
+| `BETTER_AUTH_SECRET` | dev-only fallback | Supplied value is in `.env` |
+| `BETTER_AUTH_URL` | `http://localhost:4000` | Next.js origin in `.env`; the proxy forwards auth requests here |
 | `CLIENT_URL` | `http://localhost:3000` | Allowed CORS origin; comma-separated for multiple |
-| `IMGBB_API_KEY` | empty | [Get a key](https://api.imgbb.com/) |
+| `GOOGLE_CLIENT_ID` | empty | Supplied Google OAuth client ID |
+| `GOOGLE_CLIENT_SECRET` | empty | Supplied Google OAuth client secret |
+| `IMGBB_API_KEY` | empty | Supplied key is configured in `.env` |
 | `STRIPE_SECRET_KEY` | empty | [Stripe test keys](https://dashboard.stripe.com/test/apikeys) |
 | `STRIPE_WEBHOOK_SECRET` | empty | From `stripe listen` or the Stripe dashboard |
 | `STRIPE_SUCCESS_AMOUNT` | `999` | Example checkout amount in cents |
@@ -59,6 +63,13 @@ Scripts:
 - **Better Auth** is mounted before `express.json()` because it needs the raw
   request stream. Express 5 uses the `/api/auth/{*splat}` wildcard. Auth tables
   are created automatically by the MongoDB adapter; no migrations needed.
+- **Google OAuth** is enabled when both Google variables are set. Register
+  `http://localhost:3000/api/auth/callback/google` as an authorized redirect
+  URI. New Google users get the internal `pending` role and choose Vendor or
+  Customer on `/complete-profile`.
+- **Password/role validation** runs in a `hooks.before` handler on
+  `/sign-up/email`: 6+ characters with upper- and lowercase letters, and a
+  `customer` or `vendor` role.
 - **Stripe webhook** uses `express.raw()` and `stripe.webhooks.constructEvent`.
   For local development: `stripe listen --forward-to localhost:4000/api/payments/webhook`
   and copy the printed `whsec_…` value into `STRIPE_WEBHOOK_SECRET`.

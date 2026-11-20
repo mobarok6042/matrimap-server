@@ -32,6 +32,11 @@ const envSchema = z.object({
     )
     .default("http://localhost:3000"),
 
+  // Google OAuth. Optional at the type level so builds work without secrets,
+  // but the provider is only registered when both values are present.
+  GOOGLE_CLIENT_ID: z.string().default(""),
+  GOOGLE_CLIENT_SECRET: z.string().default(""),
+
   IMGBB_API_KEY: z.string().default(""),
 
   STRIPE_SECRET_KEY: z.string().default(""),
