@@ -6,6 +6,7 @@ import { mongoDb } from "../config/database.js";
 import { HttpError } from "../lib/http-error.js";
 import { requireAdmin, requireAuth } from "../middleware/require-auth.js";
 import { ServiceModel } from "../models/service.model.js";
+import { PaymentTransactionModel } from "../models/payment-transaction.model.js";
 
 type ManagedRole = "customer" | "vendor";
 
@@ -110,6 +111,18 @@ adminRouter.get("/users", async (_req, res, next) => {
         createdAt: user.createdAt,
       })),
     );
+  } catch (error) {
+    next(error);
+  }
+});
+
+adminRouter.get("/payments", async (_req, res, next) => {
+  try {
+    const transactions = await PaymentTransactionModel.find()
+      .sort({ paidAt: -1 })
+      .limit(500)
+      .lean();
+    res.json(transactions);
   } catch (error) {
     next(error);
   }

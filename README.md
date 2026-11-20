@@ -39,8 +39,9 @@ Scripts:
 | `GOOGLE_CLIENT_SECRET` | empty | Supplied Google OAuth client secret |
 | `IMGBB_API_KEY` | empty | Supplied key is configured in `.env` |
 | `STRIPE_SECRET_KEY` | empty | [Stripe test keys](https://dashboard.stripe.com/test/apikeys) |
+| `STRIPE_PUBLISHABLE_KEY` | empty | Stored server-side; hosted Checkout does not require exposing it to the client |
 | `STRIPE_WEBHOOK_SECRET` | empty | From `stripe listen` or the Stripe dashboard |
-| `STRIPE_SUCCESS_AMOUNT` | `999` | Example checkout amount in cents |
+| `STRIPE_SUCCESS_AMOUNT` | `999` | Legacy customer premium checkout amount in cents; vendor plan prices are configured in code |
 
 ## Endpoints
 
@@ -53,7 +54,9 @@ Scripts:
 | GET | `/api/profiles/me` | cookie | Current user's profile |
 | POST | `/api/profiles` | cookie | Upsert profile (Zod-validated) |
 | POST | `/api/upload/image` | cookie | Multipart field `image` → ImgBB (max 5 MB) |
-| POST | `/api/payments/checkout` | cookie | Creates a Stripe Checkout session, returns `{ id, url }` |
+| GET | `/api/payments/me` | vendor cookie | Returns current plan, service usage and plan catalog |
+| POST | `/api/payments/checkout` | cookie | Creates a one-time Stripe Checkout session; vendors send `{ "plan": "basic" | "max" }` |
+| POST | `/api/payments/cancel` | vendor cookie | Switches to Free and deletes the vendor's stored plan transactions; does not refund the Stripe charge |
 | POST | `/api/payments/webhook` | signature | Stripe webhook; needs raw body |
 | GET | `/api/services` | public (vendors denied) | Lists approved services with active listings first |
 | GET | `/api/services/:id` | public (vendors denied) | Returns an approved service, including inactive listings |
@@ -71,6 +74,7 @@ Scripts:
 | POST | `/api/admin/services/:id/decline` | admin cookie | Declines a pending service |
 | PATCH | `/api/admin/services/:id/availability` | admin cookie | Activates/deactivates an approved service |
 | GET | `/api/admin/users` | admin cookie | Lists customer and vendor accounts |
+| GET | `/api/admin/payments` | admin cookie | Lists confirmed vendor plan payments |
 | POST | `/api/admin/users/:id/block` | admin cookie | Blocks a customer/vendor from booking or creating services |
 | POST | `/api/admin/users/:id/unblock` | admin cookie | Restores booking and service creation access |
 
@@ -103,6 +107,13 @@ Scripts:
   and by Express middleware for role-specific API endpoints. Vendor service
   updates and deletions also verify ownership server-side. Vendors use their
   private My Services page instead of the public services catalog.
+- **Vendor plans** are Free (3 services), Basic (10 services, USD 11.11 one-time),
+  and Max (25 services, USD 19.99 one-time). The service API reserves plan
+  capacity before creating each listing; paid limits are activated only by a
+  verified `checkout.session.completed` event. Configure `STRIPE_SECRET_KEY`
+  and `STRIPE_WEBHOOK_SECRET` in the server environment. Cancellation removes
+  paid access and the vendor's stored plan transactions but does not refund
+  one-time payments.
 - **Stripe webhook** uses `express.raw()` and `stripe.webhooks.constructEvent`.
   For local development: `stripe listen --forward-to localhost:4000/api/payments/webhook`
   and copy the printed `whsec_…` value into `STRIPE_WEBHOOK_SECRET`.

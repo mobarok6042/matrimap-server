@@ -2,6 +2,7 @@ import { Router, type Request } from "express";
 import { z } from "zod";
 import { HttpError } from "../lib/http-error.js";
 import { ServiceModel } from "../models/service.model.js";
+import { reserveVendorServiceSlot, releaseVendorServiceSlot } from "../lib/vendor-plan.js";
 import {
   denyVendorMarketplace,
   requireAuth,
@@ -137,15 +138,29 @@ serviceRouter.post(
         throw new HttpError(400, "Service Category is required.");
       }
 
-      const service = await ServiceModel.create({
-        ...input,
-        title,
-        category,
-        image,
-        vendorId: user.id,
-        vendorName: user.name || "Wedding Vendor",
-        vendorEmail: user.email,
-      });
+      await reserveVendorServiceSlot(user.id);
+      let service;
+      try {
+        service = await ServiceModel.create({
+          ...input,
+          title,
+          category,
+          image,
+          vendorId: user.id,
+          vendorName: user.name || "Wedding Vendor",
+          vendorEmail: user.email,
+        });
+      } catch (createError) {
+        try {
+          await releaseVendorServiceSlot(user.id);
+        } catch (releaseError) {
+          throw new AggregateError(
+            [createError, releaseError],
+            "Service creation failed and the reserved plan slot could not be released.",
+          );
+        }
+        throw createError;
+      }
 
       res.status(201).json(service);
     } catch (error) {
@@ -222,6 +237,7 @@ serviceRouter.delete(
         vendorId: req.auth!.user.id,
       });
       if (!result.deletedCount) throw new HttpError(404, "Service not found");
+      await releaseVendorServiceSlot(req.auth!.user.id);
       res.status(204).end();
     } catch (error) {
       next(error);
