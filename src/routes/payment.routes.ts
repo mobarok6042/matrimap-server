@@ -2,9 +2,13 @@ import { Router, type NextFunction, type Request, type Response } from "express"
 import { z } from "zod";
 import type Stripe from "stripe";
 import { env } from "../config/env.js";
-import { VENDOR_PLANS, getOrCreateVendorPlan, type PaidVendorPlan } from "../lib/vendor-plan.js";
+import {
+  VENDOR_PLANS,
+  getOrCreateVendorPlan,
+  type PaidVendorPlan,
+} from "../lib/vendor-plan.js";
 import { HttpError } from "../lib/http-error.js";
-import { isStripeConfigured, stripe } from "../lib/stripe.js";
+import { isStripeConfigured, isStripeTestMode, stripe } from "../lib/stripe.js";
 import { requireAuth, requireRole } from "../middleware/require-auth.js";
 import { PaymentTransactionModel } from "../models/payment-transaction.model.js";
 import { ServiceModel } from "../models/service.model.js";
@@ -13,6 +17,115 @@ import { VendorPlanModel } from "../models/vendor-plan.model.js";
 export const paymentRouter = Router();
 
 const checkoutSchema = z.object({ plan: z.enum(["basic", "max"]).optional() });
+type TransactionStatus = "pending" | "paid" | "failed" | "expired";
+
+function getParamId(req: Request): string {
+  const id = req.params.id;
+  return Array.isArray(id) ? id[0] ?? "" : id;
+}
+
+function getVendorPlanFromSession(
+  session: Stripe.Checkout.Session,
+): { vendorId: string; plan: PaidVendorPlan } | null {
+  const vendorId = session.metadata?.userId;
+  const plan = session.metadata?.plan;
+  if (
+    session.mode !== "payment" ||
+    !vendorId ||
+    session.client_reference_id !== vendorId ||
+    (plan !== "basic" && plan !== "max")
+  ) {
+    return null;
+  }
+  return { vendorId, plan };
+}
+
+async function saveVendorTransaction(
+  session: Stripe.Checkout.Session,
+  plan: PaidVendorPlan,
+  status: TransactionStatus,
+) {
+  const vendor = getVendorPlanFromSession(session);
+  if (!vendor || session.amount_total === null || !session.currency) {
+    throw new HttpError(400, "Stripe's session is missing valid vendor plan payment details.");
+  }
+
+  const selectedPlan = VENDOR_PLANS[plan];
+  if (
+    vendor.plan !== plan ||
+    session.amount_total !== selectedPlan.amount ||
+    session.currency !== selectedPlan.currency
+  ) {
+    throw new HttpError(400, "Stripe's session does not match the selected vendor plan.");
+  }
+
+  const transactionFields = {
+    vendorId: vendor.vendorId,
+    plan,
+    amount: session.amount_total,
+    currency: session.currency,
+    stripeSessionId: session.id,
+    stripeSubscriptionId:
+      typeof session.subscription === "string" ? session.subscription : null,
+  };
+  const update =
+    status === "pending"
+      ? {
+          $set: transactionFields,
+          $setOnInsert: { status: "pending" as const },
+        }
+      : { $set: { ...transactionFields, status } };
+
+  const transaction = await PaymentTransactionModel.findOneAndUpdate(
+    { stripeSessionId: session.id },
+    update,
+    { upsert: true, new: true, setDefaultsOnInsert: true },
+  ).lean();
+  if (!transaction) throw new HttpError(500, "Could not save the Stripe transaction.");
+  return transaction;
+}
+
+async function activateVendorPlan(
+  vendorId: string,
+  plan: PaidVendorPlan,
+  checkoutCreatedAt: Date,
+): Promise<boolean> {
+  const result = await VendorPlanModel.updateOne(
+    {
+      vendorId,
+      $or: [
+        { lastCancelledAt: null },
+        { lastCancelledAt: { $lt: checkoutCreatedAt } },
+      ],
+    },
+    { $set: { plan } },
+  );
+  return result.matchedCount > 0;
+}
+
+async function syncVendorCheckoutSession(
+  session: Stripe.Checkout.Session,
+  status: TransactionStatus,
+): Promise<void> {
+  const vendorPlan = getVendorPlanFromSession(session);
+  if (!vendorPlan) return;
+
+  const planRecord = await getOrCreateVendorPlan(vendorPlan.vendorId);
+  if (!planRecord) throw new HttpError(500, "Could not load the vendor's service plan.");
+  const checkoutCreatedAt = new Date(session.created * 1000);
+  if (planRecord.lastCancelledAt && checkoutCreatedAt <= planRecord.lastCancelledAt) return;
+
+  await saveVendorTransaction(session, vendorPlan.plan, status);
+  if (
+    status === "paid" &&
+    !(await activateVendorPlan(vendorPlan.vendorId, vendorPlan.plan, checkoutCreatedAt))
+  ) {
+    await PaymentTransactionModel.deleteOne({
+      stripeSessionId: session.id,
+      vendorId: vendorPlan.vendorId,
+    });
+  }
+}
 
 paymentRouter.get("/me", requireAuth, requireRole("vendor"), async (req, res, next) => {
   try {
@@ -33,6 +146,97 @@ paymentRouter.get("/me", requireAuth, requireRole("vendor"), async (req, res, ne
   }
 });
 
+paymentRouter.get(
+  "/session/:id",
+  requireAuth,
+  requireRole("customer", "vendor"),
+  async (req, res, next) => {
+    try {
+      if (!isStripeConfigured) {
+        throw new HttpError(503, "Stripe test mode is not configured on the server.");
+      }
+
+      const user = req.auth!.user;
+      const session = await stripe.checkout.sessions.retrieve(getParamId(req));
+      if (
+        session.client_reference_id !== user.id ||
+        session.metadata?.userId !== user.id
+      ) {
+        throw new HttpError(404, "Payment session not found.");
+      }
+
+      let transaction = null;
+      const vendorPlan = getVendorPlanFromSession(session);
+      if (vendorPlan) {
+        if ((user as { role?: string }).role !== "vendor") {
+          throw new HttpError(404, "Payment session not found.");
+        }
+
+        const planRecord = await getOrCreateVendorPlan(vendorPlan.vendorId);
+        if (!planRecord) throw new HttpError(500, "Could not load the vendor's service plan.");
+        const checkoutCreatedAt = new Date(session.created * 1000);
+        const wasCancelled =
+          planRecord.lastCancelledAt && checkoutCreatedAt <= planRecord.lastCancelledAt;
+
+        if (!wasCancelled) {
+          const status: TransactionStatus =
+            session.payment_status === "paid"
+              ? "paid"
+              : session.status === "expired"
+                ? "expired"
+                : "pending";
+          transaction = await saveVendorTransaction(session, vendorPlan.plan, status);
+          if (status === "paid") {
+            const activated = await activateVendorPlan(
+              vendorPlan.vendorId,
+              vendorPlan.plan,
+              checkoutCreatedAt,
+            );
+            if (!activated) {
+              await PaymentTransactionModel.deleteOne({
+                stripeSessionId: session.id,
+                vendorId: vendorPlan.vendorId,
+              });
+              transaction = null;
+            }
+          }
+        } else {
+          transaction = await PaymentTransactionModel.findOne({
+            stripeSessionId: session.id,
+            vendorId: user.id,
+          }).lean();
+        }
+      }
+
+      const createdAt =
+        transaction?.createdAt ?? new Date(session.created * 1000);
+      const status: TransactionStatus =
+        transaction?.status ??
+        (session.payment_status === "paid"
+          ? "paid"
+          : session.status === "expired"
+            ? "expired"
+            : "pending");
+
+      res.json({
+        vendorId: transaction?.vendorId ?? vendorPlan?.vendorId ?? null,
+        plan: transaction?.plan ?? vendorPlan?.plan ?? null,
+        amount: transaction?.amount ?? session.amount_total,
+        currency: transaction?.currency ?? session.currency,
+        stripeSessionId: session.id,
+        stripeSubscriptionId:
+          transaction?.stripeSubscriptionId ??
+          (typeof session.subscription === "string" ? session.subscription : null),
+        status,
+        createdAt,
+        mode: isStripeTestMode ? "test" : "live",
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
 /** POST /api/payments/checkout — creates a hosted Stripe Checkout session. */
 paymentRouter.post(
   "/checkout",
@@ -41,7 +245,10 @@ paymentRouter.post(
   async (req, res, next) => {
   try {
     if (!isStripeConfigured) {
-      throw new HttpError(503, "Stripe is not configured. Add STRIPE_SECRET_KEY to .env");
+      throw new HttpError(
+        503,
+        "Stripe test mode is not configured. Add an sk_test_ secret key to the server .env.",
+      );
     }
 
     const user = req.auth!.user;
@@ -100,6 +307,10 @@ paymentRouter.post(
       },
     );
 
+    if (vendorPlan) {
+      await saveVendorTransaction(session, vendorPlan, "pending");
+    }
+
     res.json({ id: session.id, url: session.url });
   } catch (error) {
     next(error);
@@ -137,72 +348,18 @@ export async function stripeWebhook(
       case "checkout.session.completed":
       case "checkout.session.async_payment_succeeded": {
         const session = event.data.object as Stripe.Checkout.Session;
-        const vendorId = session.metadata?.userId;
-        const plan = session.metadata?.plan;
-        if (
-          session.mode !== "payment" ||
-          session.payment_status !== "paid" ||
-          !vendorId ||
-          session.client_reference_id !== vendorId ||
-          (plan !== "basic" && plan !== "max")
-        ) {
-          break;
-        }
-
-        if (session.amount_total === null || !session.currency) {
-          throw new HttpError(400, "Stripe's completed session is missing its amount or currency.");
-        }
-        const selectedPlan = VENDOR_PLANS[plan];
-        if (
-          session.amount_total !== selectedPlan.amount ||
-          session.currency !== selectedPlan.currency
-        ) {
-          throw new HttpError(400, "Stripe's completed session does not match the selected vendor plan.");
-        }
-
-        const eventTime = new Date(event.created * 1000);
-        const planUpdate = await VendorPlanModel.updateOne(
-          {
-            vendorId,
-            $or: [
-              { lastCancelledAt: null },
-              { lastCancelledAt: { $lt: eventTime } },
-            ],
-          },
-          { $set: { plan } },
+        await syncVendorCheckoutSession(
+          session,
+          session.payment_status === "paid" ? "paid" : "pending",
         );
-        if (!planUpdate.matchedCount) {
-          break;
-        }
-
-        const transaction = await PaymentTransactionModel.findOneAndUpdate(
-          { checkoutSessionId: session.id },
-          {
-            $setOnInsert: {
-              vendorId,
-              vendorName: session.metadata?.vendorName || session.customer_details?.name || "Vendor",
-              vendorEmail:
-                session.metadata?.vendorEmail ||
-                session.customer_details?.email ||
-                session.customer_email ||
-                "",
-              plan,
-              amount: session.amount_total,
-              currency: session.currency,
-              checkoutSessionId: session.id,
-              paymentIntentId:
-                typeof session.payment_intent === "string" ? session.payment_intent : null,
-              paidAt: eventTime,
-            },
-          },
-          { upsert: true, new: true, setDefaultsOnInsert: true },
-        ).lean();
-        if (!transaction) throw new HttpError(500, "Could not save the Stripe transaction.");
-
-        const currentPlan = await VendorPlanModel.findOne({ vendorId }).lean();
-        if (currentPlan?.lastCancelledAt && eventTime <= currentPlan.lastCancelledAt) {
-          await PaymentTransactionModel.deleteOne({ checkoutSessionId: session.id });
-        }
+        break;
+      }
+      case "checkout.session.async_payment_failed": {
+        await syncVendorCheckoutSession(event.data.object as Stripe.Checkout.Session, "failed");
+        break;
+      }
+      case "checkout.session.expired": {
+        await syncVendorCheckoutSession(event.data.object as Stripe.Checkout.Session, "expired");
         break;
       }
       case "payment_intent.payment_failed": {

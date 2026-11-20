@@ -119,7 +119,8 @@ adminRouter.get("/users", async (_req, res, next) => {
 adminRouter.get("/payments", async (_req, res, next) => {
   try {
     const transactions = await PaymentTransactionModel.find()
-      .sort({ paidAt: -1 })
+      .select("vendorId plan amount currency stripeSessionId stripeSubscriptionId status createdAt")
+      .sort({ createdAt: -1 })
       .limit(500)
       .lean();
     res.json(transactions);

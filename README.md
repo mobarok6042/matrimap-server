@@ -38,7 +38,7 @@ Scripts:
 | `GOOGLE_CLIENT_ID` | empty | Supplied Google OAuth client ID |
 | `GOOGLE_CLIENT_SECRET` | empty | Supplied Google OAuth client secret |
 | `IMGBB_API_KEY` | empty | Supplied key is configured in `.env` |
-| `STRIPE_SECRET_KEY` | empty | [Stripe test keys](https://dashboard.stripe.com/test/apikeys) |
+| `STRIPE_SECRET_KEY` | empty | Must be a test-mode `sk_test_…` key; live keys are rejected |
 | `STRIPE_PUBLISHABLE_KEY` | empty | Stored server-side; hosted Checkout does not require exposing it to the client |
 | `STRIPE_WEBHOOK_SECRET` | empty | From `stripe listen` or the Stripe dashboard |
 | `STRIPE_SUCCESS_AMOUNT` | `999` | Legacy customer premium checkout amount in cents; vendor plan prices are configured in code |
@@ -56,6 +56,7 @@ Scripts:
 | POST | `/api/upload/image` | cookie | Multipart field `image` → ImgBB (max 5 MB) |
 | GET | `/api/payments/me` | vendor cookie | Returns current plan, service usage and plan catalog |
 | POST | `/api/payments/checkout` | cookie | Creates a one-time Stripe Checkout session; vendors send `{ "plan": "basic" | "max" }` |
+| GET | `/api/payments/session/:id` | owner cookie | Verifies a Stripe session and synchronizes vendor payment status |
 | POST | `/api/payments/cancel` | vendor cookie | Switches to Free and deletes the vendor's stored plan transactions; does not refund the Stripe charge |
 | POST | `/api/payments/webhook` | signature | Stripe webhook; needs raw body |
 | GET | `/api/services` | public (vendors denied) | Lists approved services with active listings first |
@@ -74,7 +75,7 @@ Scripts:
 | POST | `/api/admin/services/:id/decline` | admin cookie | Declines a pending service |
 | PATCH | `/api/admin/services/:id/availability` | admin cookie | Activates/deactivates an approved service |
 | GET | `/api/admin/users` | admin cookie | Lists customer and vendor accounts |
-| GET | `/api/admin/payments` | admin cookie | Lists confirmed vendor plan payments |
+| GET | `/api/admin/payments` | admin cookie | Lists vendor plan transactions with vendor, plan, amount, Stripe IDs, status and creation date |
 | POST | `/api/admin/users/:id/block` | admin cookie | Blocks a customer/vendor from booking or creating services |
 | POST | `/api/admin/users/:id/unblock` | admin cookie | Restores booking and service creation access |
 

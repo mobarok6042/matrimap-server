@@ -7,4 +7,5 @@ import { env } from "../config/env.js";
  */
 export const stripe = new Stripe(env.STRIPE_SECRET_KEY || "sk_test_placeholder");
 
-export const isStripeConfigured = env.STRIPE_SECRET_KEY.length > 0;
+export const isStripeTestMode = env.STRIPE_SECRET_KEY.startsWith("sk_test_");
+export const isStripeConfigured = isStripeTestMode;
