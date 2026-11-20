@@ -1,8 +1,9 @@
-import { Router } from "express";
+import { Router, type Request } from "express";
 import { z } from "zod";
 import { HttpError } from "../lib/http-error.js";
 import { ServiceModel } from "../models/service.model.js";
 import {
+  denyVendorMarketplace,
   requireAuth,
   requireRole,
   requireUnblockedUser,
@@ -10,6 +11,11 @@ import {
 import { Types } from "mongoose";
 
 export const serviceRouter = Router();
+
+function getServiceId(req: Request): string {
+  const id = req.params.id;
+  return Array.isArray(id) ? id[0] ?? "" : id;
+}
 
 const createServiceSchema = z.object({
   title: z.string().min(3, "Service Name must be at least 3 characters").max(120).optional(),
@@ -28,7 +34,7 @@ const createServiceSchema = z.object({
 });
 
 // GET /api/services — Publicly accessible; approved services are listed with active first.
-serviceRouter.get("/", async (req, res, next) => {
+serviceRouter.get("/", denyVendorMarketplace, async (req, res, next) => {
   try {
     const { category, search } = req.query;
     const filter: Record<string, unknown> = { approvalStatus: "approved" };
@@ -75,12 +81,13 @@ serviceRouter.get(
   requireUnblockedUser,
   async (req, res, next) => {
     try {
-      if (!Types.ObjectId.isValid(req.params.id)) {
+      const id = getServiceId(req);
+      if (!Types.ObjectId.isValid(id)) {
         throw new HttpError(404, "Service not found");
       }
 
       const service = await ServiceModel.findOne({
-        _id: req.params.id,
+        _id: id,
         vendorId: req.auth!.user.id,
       }).lean();
       if (!service) throw new HttpError(404, "Service not found");
@@ -92,10 +99,13 @@ serviceRouter.get(
 );
 
 // GET /api/services/:id — Publicly accessible for approved services, including inactive ones.
-serviceRouter.get("/:id", async (req, res, next) => {
+serviceRouter.get("/:id", denyVendorMarketplace, async (req, res, next) => {
   try {
+    const id = getServiceId(req);
+    if (!Types.ObjectId.isValid(id)) throw new HttpError(404, "Service not found");
+
     const service = await ServiceModel.findOne({
-      _id: req.params.id,
+      _id: id,
       approvalStatus: "approved",
     }).lean();
     if (!service) throw new HttpError(404, "Service not found");
@@ -112,39 +122,39 @@ serviceRouter.post(
   requireRole("vendor"),
   requireUnblockedUser,
   async (req, res, next) => {
-  try {
-    const user = req.auth!.user;
+    try {
+      const user = req.auth!.user;
 
-    const input = createServiceSchema.parse(req.body);
-    const title = input.serviceName || input.title;
-    const category = input.serviceCategory || input.category;
-    const image = input.serviceImage || input.image || input.images?.[0] || "";
+      const input = createServiceSchema.parse(req.body);
+      const title = input.serviceName || input.title;
+      const category = input.serviceCategory || input.category;
+      const image = input.serviceImage || input.image || input.images?.[0] || "";
 
-    if (!title) {
-      throw new HttpError(400, "Service Name is required.");
+      if (!title) {
+        throw new HttpError(400, "Service Name is required.");
+      }
+      if (!category) {
+        throw new HttpError(400, "Service Category is required.");
+      }
+
+      const service = await ServiceModel.create({
+        ...input,
+        title,
+        category,
+        image,
+        vendorId: user.id,
+        vendorName: user.name || "Wedding Vendor",
+        vendorEmail: user.email,
+      });
+
+      res.status(201).json(service);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({ error: "Invalid service data", issues: error.issues });
+        return;
+      }
+      next(error);
     }
-    if (!category) {
-      throw new HttpError(400, "Service Category is required.");
-    }
-
-    const service = await ServiceModel.create({
-      ...input,
-      title,
-      category,
-      image,
-      vendorId: user.id,
-      vendorName: user.name || "Wedding Vendor",
-      vendorEmail: user.email,
-    });
-
-    res.status(201).json(service);
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      res.status(400).json({ error: "Invalid service data", issues: error.issues });
-      return;
-    }
-    next(error);
-  }
   },
 );
 
@@ -155,7 +165,7 @@ serviceRouter.put(
   requireUnblockedUser,
   async (req, res, next) => {
     try {
-      const id = req.params.id;
+      const id = getServiceId(req);
       if (!Types.ObjectId.isValid(id)) throw new HttpError(404, "Service not found");
 
       const input = createServiceSchema.parse(req.body);
@@ -176,6 +186,7 @@ serviceRouter.put(
             description: input.description,
             location: input.location,
             image,
+            images: image ? [image] : [],
             phone: input.phone,
             email: input.email,
             approvalStatus: "pending",
@@ -203,7 +214,7 @@ serviceRouter.delete(
   requireUnblockedUser,
   async (req, res, next) => {
     try {
-      const id = req.params.id;
+      const id = getServiceId(req);
       if (!Types.ObjectId.isValid(id)) throw new HttpError(404, "Service not found");
 
       const result = await ServiceModel.deleteOne({

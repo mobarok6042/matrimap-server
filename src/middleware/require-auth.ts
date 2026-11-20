@@ -46,6 +46,31 @@ export function requireRole(...allowedRoles: string[]) {
   };
 }
 
+export async function denyVendorMarketplace(
+  req: Request,
+  _res: Response,
+  next: NextFunction,
+): Promise<void> {
+  if (!req.headers.cookie) {
+    next();
+    return;
+  }
+
+  try {
+    const session = await auth.api.getSession({
+      headers: fromNodeHeaders(req.headers),
+    });
+    const role = (session?.user as { role?: string } | undefined)?.role;
+    if (role === "vendor") {
+      next(new HttpError(403, "Vendors can manage their own listings in My Services."));
+      return;
+    }
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
 export function requireAdmin(
   req: Request,
   _res: Response,

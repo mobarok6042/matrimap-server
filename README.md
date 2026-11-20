@@ -55,10 +55,17 @@ Scripts:
 | POST | `/api/upload/image` | cookie | Multipart field `image` → ImgBB (max 5 MB) |
 | POST | `/api/payments/checkout` | cookie | Creates a Stripe Checkout session, returns `{ id, url }` |
 | POST | `/api/payments/webhook` | signature | Stripe webhook; needs raw body |
-| GET | `/api/services` | public | Lists approved services with active listings first |
-| GET | `/api/services/:id` | public | Returns an approved service, including inactive listings |
+| GET | `/api/services` | public (vendors denied) | Lists approved services with active listings first |
+| GET | `/api/services/:id` | public (vendors denied) | Returns an approved service, including inactive listings |
 | POST | `/api/services` | vendor cookie | Creates a service pending admin approval; blocked vendors are rejected |
+| POST | `/api/services/seed` | admin cookie | Loads example listings when the service collection is empty |
+| GET | `/api/services/vendor/me` | vendor cookie | Lists the signed-in vendor's services |
+| GET | `/api/services/:id/manage` | owning vendor cookie | Loads an owned service for editing |
+| PUT | `/api/services/:id` | owning vendor cookie | Updates an owned service and resubmits it for admin review |
+| DELETE | `/api/services/:id` | owning vendor cookie | Deletes an owned service |
 | POST | `/api/bookings` | customer cookie | Creates a booking for an approved service; blocked customers are rejected |
+| GET | `/api/bookings/me` | customer cookie | Lists the signed-in customer's bookings |
+| GET | `/api/bookings/vendor/me` | vendor cookie | Lists booking requests for the signed-in vendor |
 | GET | `/api/admin/services` | admin cookie | Lists all services and their review/availability status |
 | POST | `/api/admin/services/:id/approve` | admin cookie | Approves a pending service for public display |
 | POST | `/api/admin/services/:id/decline` | admin cookie | Declines a pending service |
@@ -87,9 +94,15 @@ Scripts:
 - **Service moderation** defaults new services to `pending`. Existing services
   without an approval status are also treated as pending. Public service cards
   include approved active and inactive listings, with active listings first;
-  only active listings can be booked.
-- **Blocked accounts** cannot create service listings or booking requests.
+  only active listings can be booked. Vendor edits return a listing to pending
+  review.
+- **Blocked accounts** cannot create, edit, or delete service listings or create
+  booking requests.
   Admin block/unblock controls apply only to customer and vendor accounts.
+- **Role access** is checked by the Next.js request proxy for protected pages
+  and by Express middleware for role-specific API endpoints. Vendor service
+  updates and deletions also verify ownership server-side. Vendors use their
+  private My Services page instead of the public services catalog.
 - **Stripe webhook** uses `express.raw()` and `stripe.webhooks.constructEvent`.
   For local development: `stripe listen --forward-to localhost:4000/api/payments/webhook`
   and copy the printed `whsec_…` value into `STRIPE_WEBHOOK_SECRET`.
