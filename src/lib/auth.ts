@@ -14,6 +14,10 @@ export const PASSWORD_PATTERN = /^(?=.*[a-z])(?=.*[A-Z]).{6,}$/;
 export const PASSWORD_RULE_MESSAGE =
   "Password must be at least 6 characters and contain one uppercase and one lowercase letter.";
 
+function isSelectableRole(role: unknown): role is UserRole {
+  return USER_ROLES.some((allowedRole) => allowedRole === role);
+}
+
 const googleProvider =
   env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET
     ? {
@@ -69,6 +73,25 @@ export const auth = betterAuth({
   session: {
     expiresIn: 60 * 60 * 24 * 7, // 7 days
     updateAge: 60 * 60 * 24, // refresh once per day
+  },
+
+  databaseHooks: {
+    user: {
+      update: {
+        before: async (user, context) => {
+          if (user.role === undefined) return;
+
+          const currentRole = (
+            context?.context.session?.user as { role?: string } | undefined
+          )?.role;
+          if (currentRole !== "pending" || !isSelectableRole(user.role)) {
+            throw new APIError("FORBIDDEN", {
+              message: "Your account role cannot be changed.",
+            });
+          }
+        },
+      },
+    },
   },
 
   hooks: {

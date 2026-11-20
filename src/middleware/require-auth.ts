@@ -28,6 +28,24 @@ export async function requireAuth(
       return;
     }
 
+    const userId = session.user.id;
+    const ids: (string | ObjectId)[] = [userId];
+    if (ObjectId.isValid(userId)) ids.push(new ObjectId(userId));
+
+    const user = await mongoDb
+      .collection<{ _id: string | ObjectId; isBlocked?: boolean }>("user")
+      .findOne({ _id: { $in: ids } }, { projection: { isBlocked: 1 } });
+
+    if (!user) {
+      res.status(401).json({ error: "User account not found." });
+      return;
+    }
+
+    if (user.isBlocked === true) {
+      res.status(403).json({ error: "Your account is blocked and cannot perform this action." });
+      return;
+    }
+
     req.auth = session;
     next();
   } catch (error) {
@@ -82,34 +100,4 @@ export function requireAdmin(
     return;
   }
   next();
-}
-
-export async function requireUnblockedUser(
-  req: Request,
-  res: Response,
-  next: NextFunction,
-): Promise<void> {
-  try {
-    const userId = req.auth!.user.id;
-    const ids: (string | ObjectId)[] = [userId];
-    if (ObjectId.isValid(userId)) ids.push(new ObjectId(userId));
-
-    const user = await mongoDb
-      .collection<{ _id: string | ObjectId; isBlocked?: boolean }>("user")
-      .findOne({ _id: { $in: ids } }, { projection: { isBlocked: 1 } });
-
-    if (!user) {
-      res.status(401).json({ error: "User account not found." });
-      return;
-    }
-
-    if (user.isBlocked === true) {
-      res.status(403).json({ error: "Your account is blocked and cannot perform this action." });
-      return;
-    }
-
-    next();
-  } catch (error) {
-    next(error);
-  }
 }

@@ -7,7 +7,6 @@ import {
   denyVendorMarketplace,
   requireAuth,
   requireRole,
-  requireUnblockedUser,
 } from "../middleware/require-auth.js";
 import { Types } from "mongoose";
 
@@ -79,7 +78,6 @@ serviceRouter.get(
   "/:id/manage",
   requireAuth,
   requireRole("vendor"),
-  requireUnblockedUser,
   async (req, res, next) => {
     try {
       const id = getServiceId(req);
@@ -121,7 +119,6 @@ serviceRouter.post(
   "/",
   requireAuth,
   requireRole("vendor"),
-  requireUnblockedUser,
   async (req, res, next) => {
     try {
       const user = req.auth!.user;
@@ -177,7 +174,6 @@ serviceRouter.put(
   "/:id",
   requireAuth,
   requireRole("vendor"),
-  requireUnblockedUser,
   async (req, res, next) => {
     try {
       const id = getServiceId(req);
@@ -226,7 +222,6 @@ serviceRouter.delete(
   "/:id",
   requireAuth,
   requireRole("vendor"),
-  requireUnblockedUser,
   async (req, res, next) => {
     try {
       const id = getServiceId(req);

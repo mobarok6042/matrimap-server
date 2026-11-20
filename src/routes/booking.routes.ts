@@ -6,7 +6,6 @@ import { ServiceModel } from "../models/service.model.js";
 import {
   requireAuth,
   requireRole,
-  requireUnblockedUser,
 } from "../middleware/require-auth.js";
 
 export const bookingRouter = Router();
@@ -23,7 +22,6 @@ bookingRouter.post(
   "/",
   requireAuth,
   requireRole("customer"),
-  requireUnblockedUser,
   async (req, res, next) => {
   try {
     const input = createBookingSchema.parse(req.body);
