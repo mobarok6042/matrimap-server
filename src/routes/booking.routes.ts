@@ -3,7 +3,7 @@ import { z } from "zod";
 import { HttpError } from "../lib/http-error.js";
 import { BookingModel } from "../models/booking.model.js";
 import { ServiceModel } from "../models/service.model.js";
-import { requireAuth } from "../middleware/require-auth.js";
+import { requireAuth, requireUnblockedUser } from "../middleware/require-auth.js";
 
 export const bookingRouter = Router();
 
@@ -15,12 +15,21 @@ const createBookingSchema = z.object({
 });
 
 // POST /api/bookings — create a booking request. Defaults to "pending".
-bookingRouter.post("/", requireAuth, async (req, res, next) => {
+bookingRouter.post("/", requireAuth, requireUnblockedUser, async (req, res, next) => {
   try {
     const input = createBookingSchema.parse(req.body);
     const user = req.auth!.user;
+    const userRole = (user as { role?: string }).role;
 
-    const service = await ServiceModel.findById(input.serviceId).lean();
+    if (userRole !== "customer") {
+      throw new HttpError(403, "Only customer accounts can request bookings.");
+    }
+
+    const service = await ServiceModel.findOne({
+      _id: input.serviceId,
+      approvalStatus: "approved",
+      isAvailable: { $ne: false },
+    }).lean();
     if (!service) throw new HttpError(404, "Service not found");
 
     const booking = await BookingModel.create({
@@ -94,11 +103,12 @@ bookingRouter.post("/:id/accept", requireAuth, async (req, res, next) => {
       throw new HttpError(403, "You can only respond to bookings for your own services.");
     }
 
-    const updated = await BookingModel.findByIdAndUpdate(
-      req.params.id,
+    const updated = await BookingModel.findOneAndUpdate(
+      { _id: req.params.id, vendorId: user.id, status: "pending" },
       { status: "accepted" },
       { new: true },
     ).lean();
+    if (!updated) throw new HttpError(409, "This booking request has already been answered.");
 
     res.json(updated);
   } catch (error) {
@@ -123,11 +133,12 @@ bookingRouter.post("/:id/decline", requireAuth, async (req, res, next) => {
       throw new HttpError(403, "You can only respond to bookings for your own services.");
     }
 
-    const updated = await BookingModel.findByIdAndUpdate(
-      req.params.id,
+    const updated = await BookingModel.findOneAndUpdate(
+      { _id: req.params.id, vendorId: user.id, status: "pending" },
       { status: "declined" },
       { new: true },
     ).lean();
+    if (!updated) throw new HttpError(409, "This booking request has already been answered.");
 
     res.json(updated);
   } catch (error) {

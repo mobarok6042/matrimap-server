@@ -45,8 +45,14 @@ export const auth = betterAuth({
         input: true,
         validator: {
           input: z.enum(["customer", "vendor", "pending"]),
-          output: z.enum(["customer", "vendor", "pending"]),
+          output: z.enum(["customer", "vendor", "pending", "admin"]),
         },
+      },
+      isBlocked: {
+        type: "boolean",
+        required: true,
+        defaultValue: false,
+        input: false,
       },
     },
   },

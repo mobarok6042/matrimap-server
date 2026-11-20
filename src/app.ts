@@ -10,6 +10,7 @@ import { paymentRouter, stripeWebhook } from "./routes/payment.routes.js";
 import { profileRouter } from "./routes/profile.routes.js";
 import { serviceRouter } from "./routes/service.routes.js";
 import { bookingRouter } from "./routes/booking.routes.js";
+import { adminRouter } from "./routes/admin.routes.js";
 import { uploadRouter } from "./routes/upload.routes.js";
 
 export function createApp() {
@@ -44,6 +45,7 @@ export function createApp() {
   app.use("/api/profiles", profileRouter);
   app.use("/api/services", serviceRouter);
   app.use("/api/bookings", bookingRouter);
+  app.use("/api/admin", adminRouter);
   app.use("/api/upload", uploadRouter);
   app.use("/api/payments", paymentRouter);
 

@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { HttpError } from "../lib/http-error.js";
 import { ServiceModel } from "../models/service.model.js";
-import { requireAuth } from "../middleware/require-auth.js";
+import { requireAuth, requireUnblockedUser } from "../middleware/require-auth.js";
 
 export const serviceRouter = Router();
 
@@ -26,7 +26,10 @@ const createServiceSchema = z.object({
 serviceRouter.get("/", async (req, res, next) => {
   try {
     const { category, search } = req.query;
-    const filter: Record<string, unknown> = {};
+    const filter: Record<string, unknown> = {
+      approvalStatus: "approved",
+      isAvailable: { $ne: false },
+    };
 
     if (category && typeof category === "string" && category !== "All") {
       filter.category = category;
@@ -68,7 +71,11 @@ serviceRouter.get("/vendor/me", requireAuth, async (req, res, next) => {
 // GET /api/services/:id — Publicly accessible
 serviceRouter.get("/:id", async (req, res, next) => {
   try {
-    const service = await ServiceModel.findById(req.params.id).lean();
+    const service = await ServiceModel.findOne({
+      _id: req.params.id,
+      approvalStatus: "approved",
+      isAvailable: { $ne: false },
+    }).lean();
     if (!service) throw new HttpError(404, "Service not found");
     res.json(service);
   } catch (error) {
@@ -77,7 +84,7 @@ serviceRouter.get("/:id", async (req, res, next) => {
 });
 
 // POST /api/services — Only for vendor users
-serviceRouter.post("/", requireAuth, async (req, res, next) => {
+serviceRouter.post("/", requireAuth, requireUnblockedUser, async (req, res, next) => {
   try {
     const user = req.auth!.user;
     const userRole = (user as { role?: string })?.role;

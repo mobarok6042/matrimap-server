@@ -15,6 +15,12 @@ const serviceSchema = new Schema(
     vendorId: { type: String, required: true, index: true },
     vendorName: { type: String, required: true, trim: true },
     vendorEmail: { type: String, required: true, trim: true },
+    approvalStatus: {
+      type: String,
+      enum: ["pending", "approved", "declined"],
+      default: "pending",
+      index: true,
+    },
     rating: { type: Number, default: 5.0, min: 1, max: 5 },
     isAvailable: { type: Boolean, default: true },
   },
