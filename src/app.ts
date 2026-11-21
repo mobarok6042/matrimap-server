@@ -12,6 +12,7 @@ import { serviceRouter } from "./routes/service.routes.js";
 import { bookingRouter } from "./routes/booking.routes.js";
 import { adminRouter } from "./routes/admin.routes.js";
 import { uploadRouter } from "./routes/upload.routes.js";
+import { authTokenRouter } from "./routes/auth-token.routes.js";
 
 export function createApp() {
   const app = express();
@@ -35,6 +36,7 @@ export function createApp() {
 
   // Better Auth needs the untouched request stream — mount before express.json().
   app.all("/api/auth/{*splat}", toNodeHandler(auth));
+  app.use("/api/auth-token", authTokenRouter);
 
   // Stripe needs the raw body bytes for signature verification.
   app.post("/api/payments/webhook", express.raw({ type: "application/json" }), stripeWebhook);

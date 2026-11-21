@@ -23,7 +23,7 @@ interface ImgBbResponse {
 /** Uploads a single in-memory image to ImgBB and returns the hosted URLs. */
 export async function uploadToImgBb(image: Buffer, name?: string): Promise<ImgBbResult> {
   if (!env.IMGBB_API_KEY) {
-    throw new HttpError(503, "ImgBB is not configured. Add IMGBB_API_KEY to .env");
+    throw new HttpError(503, "Image uploads are temporarily unavailable.");
   }
 
   const body = new URLSearchParams({
@@ -40,16 +40,15 @@ export async function uploadToImgBb(image: Buffer, name?: string): Promise<ImgBb
       signal: AbortSignal.timeout(30_000),
     });
   } catch (error) {
-    throw new HttpError(502, `ImgBB request failed: ${(error as Error).message}`);
+    console.error("[matrimap:imgbb] Upload request failed", error);
+    throw new HttpError(502, "We could not upload this image. Please try again later.");
   }
 
   const payload = (await response.json()) as ImgBbResponse;
 
   if (!response.ok || !payload.success || !payload.data) {
-    throw new HttpError(
-      502,
-      payload.error?.message ?? `ImgBB rejected the image (status ${payload.status})`,
-    );
+    console.warn("[matrimap:imgbb] Image upload was rejected", { status: payload.status });
+    throw new HttpError(502, "We could not upload this image. Please try another image.");
   }
 
   return {

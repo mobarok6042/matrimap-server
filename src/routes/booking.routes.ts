@@ -3,6 +3,7 @@ import { z } from "zod";
 import { HttpError } from "../lib/http-error.js";
 import { BookingModel } from "../models/booking.model.js";
 import { ServiceModel } from "../models/service.model.js";
+import { Types } from "mongoose";
 import {
   requireAuth,
   requireRole,
@@ -11,7 +12,7 @@ import {
 export const bookingRouter = Router();
 
 const createBookingSchema = z.object({
-  serviceId: z.string().min(1, "Service is required"),
+  serviceId: z.string().refine((value) => Types.ObjectId.isValid(value), "Service is invalid"),
   eventDate: z.string().min(1, "Event date is required").max(30),
   eventLocation: z.string().min(2, "Event location is required").max(120),
   message: z.string().max(2000).optional().default(""),

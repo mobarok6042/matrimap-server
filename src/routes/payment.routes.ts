@@ -340,8 +340,9 @@ export async function stripeWebhook(
         signature,
         env.STRIPE_WEBHOOK_SECRET,
       );
-    } catch (error) {
-      throw new HttpError(400, `Webhook signature verification failed: ${(error as Error).message}`);
+    } catch {
+      console.warn("[matrimap:stripe] Webhook signature verification failed");
+      throw new HttpError(400, "Stripe webhook signature verification failed.");
     }
 
     switch (event.type) {
