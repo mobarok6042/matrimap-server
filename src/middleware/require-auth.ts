@@ -29,12 +29,21 @@ export async function requireAuth(
       ?.slice(ACCESS_TOKEN_COOKIE.length + 1);
     const claims = verifyAccessToken(bearerToken || cookieToken || "");
 
-    if (!claims) {
-      res.status(401).json({ error: "A valid access token is required." });
-      return;
+    // The JWT is an optimization for API calls, not the source of truth for
+    // authentication. A session cookie can still be valid when the short-lived
+    // API token is missing, expired, or could not be minted by /api/auth-token.
+    let userId = claims?.sub;
+    if (!userId) {
+      const session = await auth.api.getSession({
+        headers: fromNodeHeaders(req.headers),
+      });
+      userId = session?.user.id;
     }
 
-    const userId = claims.sub;
+    if (!userId) {
+      res.status(401).json({ error: "You must be signed in to do that." });
+      return;
+    }
     const ids: (string | ObjectId)[] = [userId];
     if (ObjectId.isValid(userId)) ids.push(new ObjectId(userId));
 
