@@ -1,6 +1,6 @@
 import cors from "cors";
 import express from "express";
-import helmet from "helmet";
+import * as helmetModule from "helmet";
 import { toNodeHandler } from "better-auth/node";
 import { env } from "./config/env.js";
 import { auth } from "./lib/auth.js";
@@ -16,6 +16,7 @@ import { authTokenRouter } from "./routes/auth-token.routes.js";
 
 export function createApp() {
   const app = express();
+  const helmet = helmetModule.default;
 
   app.disable("x-powered-by");
   app.set("trust proxy", 1);
