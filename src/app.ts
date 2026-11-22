@@ -35,6 +35,10 @@ export function createApp() {
     }),
   );
 
+  app.get("/", (_req, res) => {
+    res.json({ service: "matrimap-server", status: "ok" });
+  });
+
   app.get("/health", (_req, res) => {
     res.json({ status: "ok", uptime: Math.round(process.uptime()) });
   });
